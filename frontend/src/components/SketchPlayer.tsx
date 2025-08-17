@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useAnimationControls } from "framer-motion";
 
 type Path = { d: string };
 type Step = { label: string; paths: Path[]; est_ms: number };
@@ -8,7 +8,8 @@ type Sketch = { svg: { viewBox: string; strokes: string[] }, steps: Step[] };
 export default function SketchPlayer({
   data, width, height,
   showGrid = false, gridSize = 50,
-  revealColorAtEnd = true, bgSrc
+  revealColorAtEnd = true, bgSrc,
+  playbackSpeed = 1
 }: {
   data: Sketch;
   width: number;
@@ -17,35 +18,24 @@ export default function SketchPlayer({
   gridSize?: number;
   revealColorAtEnd?: boolean;
   bgSrc?: string;
+  playbackSpeed?: number; // 0.5 .. 3
 }) {
-  const [stepIdx, setStepIdx] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [done, setDone] = useState(false);
-
-  const flatPaths = useMemo(() => {
-    const out: { d: string; step: number }[] = [];
-    data.steps.forEach((s, i) => s.paths.forEach(p => out.push({ d: p.d, step: i })));
-    return out;
+  // Build a path-level timeline so *every* path gets animated
+  const timeline = useMemo(() => {
+    const items: { d: string; step: number; label: string; dur: number }[] = [];
+    data.steps.forEach((s, stepIndex) => {
+      const perPath = Math.max(300, Math.round(s.est_ms / Math.max(1, s.paths.length)));
+      s.paths.forEach(p => items.push({ d: p.d, step: stepIndex, label: s.label, dur: perPath }));
+    });
+    return items;
   }, [data]);
 
-  useEffect(() => {
-    if (!playing) return;
-    if (stepIdx >= data.steps.length) return;
-    const dur = data.steps[stepIdx]?.est_ms ?? 1200;
-    const t = setTimeout(() => setStepIdx(i => i + 1), dur);
-    return () => clearTimeout(t);
-  }, [playing, stepIdx, data.steps]);
+  const [pathIdx, setPathIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
-  useEffect(() => {
-    const finished = stepIdx >= data.steps.length;
-    setDone(finished);
-  }, [stepIdx, data.steps.length]);
-
-  // For the "currently animating" path, use the same last path from stepIdx (if exists)
-  const currentPath = flatPaths[stepIdx];
-
-  // Parse the original viewBox to preserve proportions of uploaded image
   const vb = data.svg.viewBox || `0 0 ${width} ${height}`;
+  const done = pathIdx >= timeline.length;
+  const current = !done ? timeline[pathIdx] : null;
 
   return (
     <div>
@@ -56,7 +46,7 @@ export default function SketchPlayer({
         style={{ background: "#fff", borderRadius: 12, boxShadow: "0 2px 10px rgba(0,0,0,0.08)" }}
         preserveAspectRatio="xMidYMid meet"
       >
-        {/* Background color image (hidden until finished if revealColorAtEnd) */}
+        {/* Background image (revealed at the end if enabled) */}
         {bgSrc && (
           <image
             href={bgSrc}
@@ -68,7 +58,7 @@ export default function SketchPlayer({
           />
         )}
 
-        {/* Optional grid overlay (under the strokes) */}
+        {/* Optional grid */}
         {showGrid && (
           <>
             <defs>
@@ -80,45 +70,109 @@ export default function SketchPlayer({
           </>
         )}
 
-        {/* Already-drawn strokes */}
-        {flatPaths.slice(0, stepIdx).map((p, i) => (
-          <path key={`drawn-${i}`} d={p.d} fill="none" stroke="black" strokeWidth={2}/>
+        {/* Already drawn strokes */}
+        {timeline.slice(0, pathIdx).map((p, i) => (
+          <path
+            key={`drawn-${i}`}
+            d={p.d}
+            fill="none"
+            stroke="black"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
         ))}
 
-        {/* Currently animating stroke */}
-        {currentPath && <AnimatedStroke d={currentPath.d} />}
-
+        {/* Current stroke animates as a "write-on" */}
+        {!done && current && (
+          <AnimatedStroke
+            key={pathIdx}                 // force fresh animation when index changes
+            d={current.d}
+            durationMs={Math.max(120, current.dur / Math.max(0.1, playbackSpeed))}
+            playing={playing}
+            onDone={() => setPathIdx(i => i + 1)}
+          />
+        )}
       </svg>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      {/* Controls */}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
         <button onClick={() => setPlaying(p => !p)}>{playing ? "Pause" : "Play"}</button>
-        <button onClick={() => { setPlaying(false); setStepIdx(i => Math.max(0, i - 1)); }}>Back</button>
-        <button onClick={() => { setPlaying(false); setStepIdx(i => Math.min(data.steps.length, i + 1)); }}>Next</button>
-        <button onClick={() => { setPlaying(false); setStepIdx(0); }}>Reset</button>
+        <button onClick={() => { setPlaying(false); setPathIdx(i => Math.max(0, i - 1)); }}>Back</button>
+        <button onClick={() => { setPlaying(false); setPathIdx(i => Math.min(timeline.length, i + 1)); }}>Next</button>
+        <button onClick={() => { setPlaying(false); setPathIdx(0); }}>Reset</button>
+
+        <label style={{ marginLeft: 12 }}>
+          Speed:&nbsp;
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{playbackSpeed.toFixed(1)}×</span>
+        </label>
       </div>
 
       <div style={{ marginTop: 8, opacity: 0.8 }}>
-        {stepIdx < data.steps.length ? data.steps[stepIdx]?.label : "Done"}
+        {!done ? data.steps[timeline[pathIdx].step]?.label : "Done"}
       </div>
     </div>
   );
 }
 
-function AnimatedStroke({ d }: { d: string }) {
-  const ref = useRef<SVGPathElement>(null);
-  const [len, setLen] = useState(0);
-  useEffect(() => { if (ref.current) setLen(ref.current.getTotalLength()); }, [d]);
+/** Draws a path by animating strokeDashoffset. Pauses/resumes cleanly. */
+function AnimatedStroke({
+  d,
+  durationMs,
+  stroke = "black",
+  strokeWidth = 2,
+  playing = true,
+  onDone,
+}: {
+  d: string;
+  durationMs: number;
+  stroke?: string;
+  strokeWidth?: number;
+  playing?: boolean;
+  onDone?: () => void;
+}) {
+  const controls = useAnimationControls();
+
+  // Start / pause / resume the draw animation
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!playing) {
+        controls.stop();                 // pause at current progress
+        return;
+      }
+      // Animate strokeDashoffset from the path's length down to 0
+      await controls.start({
+        strokeDashoffset: 0,
+        transition: {
+          duration: Math.max(0.1, durationMs / 1000),
+          ease: "easeInOut",
+        },
+      });
+      if (!cancelled) onDone?.();
+    }
+
+    run();
+    return () => { cancelled = true; };
+  }, [playing, durationMs, controls, onDone, d]);
+
   return (
     <motion.path
-      ref={ref}
       d={d}
       fill="none"
-      stroke="black"
-      strokeWidth={2}
-      strokeDasharray={len}
-      initial={{ strokeDashoffset: len }}
-      animate={{ strokeDashoffset: 0 }}
-      transition={{ duration: Math.max(0.6, Math.min(6, len / 300)), ease: "easeInOut" }}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      vectorEffect="non-scaling-stroke"
+      // Use stroke-dashoffset for the "draw" effect
+      initial={{ strokeDashoffset: "100%" }}
+      animate={controls}
+      // Set strokeDasharray to make the full path visible and animatable
+      strokeDasharray="100%"
+      style={{ willChange: "stroke-dashoffset" }}
     />
   );
 }

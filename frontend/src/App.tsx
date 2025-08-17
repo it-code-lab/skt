@@ -31,6 +31,8 @@ function App() {
   const [detail, setDetail] = useState(6);
   const [vector, setVector] = useState<"outline"|"centerline">("outline");
 
+  const [playbackSpeed, setPlaybackSpeed] = useState(1); // 0.5 .. 3
+
   const API = import.meta.env.VITE_API_BASE_URL;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -40,8 +42,6 @@ function App() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      //const res = await fetch(`${API}/sketch`, { method: "POST", body: fd });
-      //const res = await fetch(`${API}/sketch?mode=${mode}&detail=${detail}`, { method: "POST", body: fd });
       const res = await fetch(`${API}/sketch?mode=${mode}&detail=${detail}&vector=${vector}`, { method: "POST", body: fd });
       const data = await res.json();
       setSketch(data);
@@ -126,13 +126,24 @@ function App() {
         <label>Detail: {detail}
           <input type="range" min={1} max={10} value={detail}
                 onChange={e=>setDetail(parseInt(e.target.value,10))}/>
-        </label>  
-
+        </label>
 
         <select value={vector} onChange={e=>setVector(e.target.value as any)}>
           <option value="outline">Outline (regions)</option>
           <option value="centerline">Centerline (strokes)</option>
-        </select>      
+        </select>
+
+        {/* Playback speed */}
+        <label style={{ marginLeft: 12 }}>Speed:
+          <input
+            type="range"
+            min={0.5} max={3} step={0.1}
+            value={playbackSpeed}
+            onChange={e => setPlaybackSpeed(parseFloat(e.target.value))}
+            style={{ width: 140, verticalAlign: "middle", marginLeft: 6 }}
+          />
+          <span style={{ marginLeft: 6 }}>{playbackSpeed.toFixed(1)}×</span>
+        </label>
       </form>
 
       {sketch ? (
@@ -144,6 +155,7 @@ function App() {
           gridSize={gridSize}
           revealColorAtEnd={revealColorAtEnd}
           bgSrc={fileUrl || undefined}
+          playbackSpeed={playbackSpeed}
         />
       ) : (
         <p>Upload an image to generate a step-by-step sketch.</p>
