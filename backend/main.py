@@ -11,7 +11,7 @@ from skimage.util import img_as_ubyte
 from fastapi import Query
 import cv2, numpy as np
 from skimage.morphology import skeletonize
-
+import math
 
 app = FastAPI()
 app.add_middleware(
@@ -259,7 +259,240 @@ def remove_frame_like(cnt, img_w, img_h, area, pad=3):
     too_big = (w >= 0.95*img_w and h >= 0.95*img_h) or (area >= 0.60 * (img_w*img_h))
     return touches_edges and too_big
 
-def binary_to_centerline_paths(binary, rdp_eps=2.0, min_len=12):
+# --- replace your binary_to_centerline_paths with this ---
+
+
+def binary_to_centerline_paths(
+    binary,
+    rdp_eps=2.0,
+    min_len=12,
+    bridge_gaps_px=1,        # 0=off, 1-2 good defaults for dashed inputs
+    spur_px=6,               # remove hairs shorter than this (pixels)
+    join_dist_px=4.0,        # stitch endpoints when this close
+    join_angle_deg=25.0      # and roughly collinear (<= this turn)
+):
+    """
+    Convert a binary line image to 1px skeleton, trace long polylines,
+    prune spurs, and stitch near-touching endpoints.
+    Returns a list of SVG path 'd' strings (centerlines).
+    """
+    bw = (binary > 0).astype(np.uint8) * 255
+
+    # 1) bridge tiny gaps before thinning (helps dashed segments connect)
+    if bridge_gaps_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                      (2 * bridge_gaps_px + 1, 2 * bridge_gaps_px + 1))
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, k, iterations=1)
+
+    # 2) skeletonize to 1px
+    skel = skeletonize((bw > 0)).astype(np.uint8)
+
+    # utilities
+    H, W = skel.shape
+    nbrs8 = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
+
+    def degree_image(img):
+        k = np.ones((3,3), np.uint8)
+        # neighbor count = 3x3 sum minus center
+        return cv2.filter2D(img, -1, k, borderType=cv2.BORDER_CONSTANT) - img
+
+    def endpoints_and_junctions(img):
+        deg = degree_image(img)
+        ends = np.argwhere((img == 1) & (deg == 1))
+        junc = np.argwhere((img == 1) & (deg >= 3))
+        return deg, [tuple(p) for p in ends], [tuple(p) for p in junc]
+
+    # 3) prune short spurs (walk from endpoints until junction/turn; delete if short)
+    def prune_spurs(img, maxlen):
+        deg, ends, _ = endpoints_and_junctions(img)
+        removed = 0
+        for ex, ey in ends:
+            path = [(ex, ey)]
+            cur = (ex, ey)
+            prev = None
+            for _ in range(maxlen):
+                # find the next neighbor (ignore where we came from)
+                nxt = None
+                for dx, dy in nbrs8:
+                    nx, ny = cur[0] + dx, cur[1] + dy
+                    if 0 <= nx < H and 0 <= ny < W and img[nx, ny] == 1:
+                        if prev is None or (nx, ny) != prev:
+                            nxt = (nx, ny)
+                            break
+                if nxt is None:
+                    break
+                path.append(nxt)
+                prev, cur = cur, nxt
+                d = degree_image(img)[cur[0], cur[1]]
+                if d != 2:  # hit a junction or another end
+                    break
+            # remove if the spur is short
+            if len(path) <= maxlen and (len(path) < 2 or degree_image(img)[path[-1][0], path[-1][1]] >= 3):
+                for px, py in path[:-1]:  # keep the junction pixel
+                    img[px, py] = 0
+                    removed += 1
+        return img, removed
+
+    if spur_px > 0:
+        # do a couple of pruning passes
+        for _ in range(2):
+            skel, _ = prune_spurs(skel, spur_px)
+
+    # 4) trace long polylines (continue through junctions using straightest path)
+    visited = np.zeros_like(skel, dtype=np.uint8)
+    deg, ends, _ = endpoints_and_junctions(skel)
+
+    def straightest(cur, prev, candidates):
+        """Pick neighbor that makes the smallest turn from prev->cur."""
+        if prev is None or not candidates:
+            return candidates[0] if candidates else None, []
+        vx, vy = cur[0] - prev[0], cur[1] - prev[1]
+        best = None
+        best_ang = 1e9
+        rest = []
+        for nx, ny in candidates:
+            ax, ay = nx - cur[0], ny - cur[1]
+            dot = vx*ax + vy*ay
+            v1 = math.hypot(vx, vy) or 1.0
+            v2 = math.hypot(ax, ay) or 1.0
+            ang = math.acos(max(-1.0, min(1.0, dot / (v1*v2))))
+            if ang < best_ang:
+                if best is not None:
+                    rest.append(best)
+                best = (nx, ny)
+                best_ang = ang
+            else:
+                rest.append((nx, ny))
+        return best, rest
+
+    def neighbors(cur, exclude=None):
+        out = []
+        for dx, dy in nbrs8:
+            nx, ny = cur[0] + dx, cur[1] + dy
+            if 0 <= nx < H and 0 <= ny < W and skel[nx, ny] == 1 and not visited[nx, ny]:
+                if exclude is None or (nx, ny) != exclude:
+                    out.append((nx, ny))
+        return out
+
+    seeds = ends[:]  # start from endpoints
+    lines = []
+
+    # if there are no endpoints (pure loops), seed from any remaining pixel
+    if not seeds:
+        seeds = [tuple(p) for p in np.argwhere(skel == 1)]
+
+    while seeds:
+        start = seeds.pop()
+        if visited[start[0], start[1]]:
+            continue
+        path = [start]
+        visited[start[0], start[1]] = 1
+        prev = None
+        cur = start
+
+        while True:
+            cand = neighbors(cur, exclude=prev)
+            if not cand:
+                break
+
+            # pick straightest continuation; push other branches as seeds
+            nxt, others = straightest(cur, prev, cand)
+            for o in others:
+                seeds.append(o)
+
+            prev2 = cur
+            cur = nxt
+            visited[cur[0], cur[1]] = 1
+            path.append(cur)
+            prev = prev2
+
+            # stop at an endpoint
+            if degree_image(skel)[cur[0], cur[1]] == 1:
+                break
+
+        if len(path) >= min_len:
+            # simplify & convert to (x,y)
+            pts_xy = [(p[1], p[0]) for p in path]
+            simp = rdp(pts_xy, epsilon=rdp_eps)
+            if len(simp) >= 2:
+                lines.append(simp)
+
+    # 5) stitch nearly touching endpoints (distance + angle check)
+    def endpoints(poly):
+        return (poly[0], poly[1]), (poly[-2], poly[-1]) if len(poly) >= 2 else (poly[0], poly[0])
+
+    def direction(a, b):
+        dx, dy = b[0]-a[0], b[1]-a[1]
+        l = math.hypot(dx, dy) or 1.0
+        return (dx/l, dy/l)
+
+    def angle_between(u, v):
+        dot = max(-1.0, min(1.0, u[0]*v[0] + u[1]*v[1]))
+        return math.degrees(math.acos(dot))
+
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(lines):
+            a = lines[i]
+            a_s, a_e = a[0], a[-1]
+            a_dir_end = direction(a[-2], a[-1]) if len(a) > 1 else (1,0)
+
+            j = i + 1
+            merged = False
+            while j < len(lines):
+                b = lines[j]
+                b_s, b_e = b[0], b[-1]
+                b_dir_start = direction(b[0], b[1]) if len(b) > 1 else (1,0)
+                b_dir_end   = direction(b[-2], b[-1]) if len(b) > 1 else (1,0)
+
+                # try four endpoint pairings (a_end ↔ b_start / b_end, a_start ↔ b_start / b_end)
+                pairs = [
+                    (a_e, b_s,  a_dir_end,  b_dir_start,  'ae_bs'),
+                    (a_e, b_e,  a_dir_end, (-b_dir_end[0], -b_dir_end[1]), 'ae_be'),
+                    (a_s, b_s, (-a_dir_end[0], -a_dir_end[1]), b_dir_start, 'as_bs'),
+                    (a_s, b_e, (-a_dir_end[0], -a_dir_end[1]),(-b_dir_end[0], -b_dir_end[1]), 'as_be'),
+                ]
+
+                did_merge = False
+                for P, Q, dP, dQ, mode in pairs:
+                    dist = math.hypot(P[0]-Q[0], P[1]-Q[1])
+                    ang  = angle_between(dP, dQ)
+                    if dist <= join_dist_px and ang <= join_angle_deg:
+                        # orient and merge
+                        if mode == 'ae_bs':
+                            new = a + b
+                        elif mode == 'ae_be':
+                            new = a + list(reversed(b))
+                        elif mode == 'as_bs':
+                            new = list(reversed(a)) + b
+                        else:  # 'as_be'
+                            new = list(reversed(a)) + list(reversed(b))
+                        # simplify the join a bit
+                        new = rdp(new, epsilon=rdp_eps)
+                        lines[i] = new
+                        lines.pop(j)
+                        did_merge = True
+                        merged = True
+                        changed = True
+                        break
+                if not did_merge:
+                    j += 1
+            if not merged:
+                i += 1
+
+    # 6) emit SVG paths
+    d_list = [
+        f"M {poly[0][0]} {poly[0][1]} " + " ".join(f"L {x} {y}" for (x, y) in poly[1:])
+        for poly in lines
+        if len(poly) >= 2
+    ]
+
+    return d_list
+
+
+def binary_to_centerline_paths_OLD_DND(binary, rdp_eps=2.0, min_len=12):
     """
     Convert a binary line image to 1px skeleton and trace polylines.
     Returns list of SVG path 'd' strings (centerlines).
