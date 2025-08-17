@@ -23,15 +23,19 @@ function App() {
   const aspect = ASPECTS[aspectKey];
   const targetHeight = useMemo(() => Math.round(targetWidth / aspect), [targetWidth, aspect]);
 
-  const [showGrid, setShowGrid] = useState(false);
+  const [showGrid, setShowGrid] = useState(true);
   const [gridSize, setGridSize] = useState(50);
   const [revealColorAtEnd, setRevealColorAtEnd] = useState(true);
 
   const [mode, setMode] = useState<"auto"|"cartoon"|"photo">("auto");
   const [detail, setDetail] = useState(6);
-  const [vector, setVector] = useState<"outline"|"centerline">("outline");
+  const [vector, setVector] = useState<"outline"|"centerline">("centerline");
 
-  const [playbackSpeed, setPlaybackSpeed] = useState(1); // 0.5 .. 3
+  const [playbackSpeed, setPlaybackSpeed] = useState(0.5); // 0.5 .. 3
+
+  // NEW: ordering + grouping options
+  const [orderMode, setOrderMode] = useState<"original" | "top-bottom" | "left-right" | "area">("top-bottom");
+  const [keepGroups, setKeepGroups] = useState<boolean>(false);
 
   const API = import.meta.env.VITE_API_BASE_URL;
 
@@ -129,8 +133,8 @@ function App() {
         </label>
 
         <select value={vector} onChange={e=>setVector(e.target.value as any)}>
-          <option value="outline">Outline (regions)</option>
           <option value="centerline">Centerline (strokes)</option>
+          <option value="outline">Outline (regions)</option>
         </select>
 
         {/* Playback speed */}
@@ -144,6 +148,21 @@ function App() {
           />
           <span style={{ marginLeft: 6 }}>{playbackSpeed.toFixed(1)}×</span>
         </label>
+
+        {/* NEW: order + grouping controls */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: 12 }}>
+          <label>Order:</label>
+          <select value={orderMode} onChange={e => setOrderMode(e.target.value as any)}>
+            <option value="original">Original</option>
+            <option value="top-bottom">Top → Bottom</option>
+            <option value="left-right">Left → Right</option>
+            <option value="area">Area (big → small)</option>
+          </select>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={keepGroups} onChange={e => setKeepGroups(e.target.checked)} />
+            Keep step groups
+          </label>
+        </div>
       </form>
 
       {sketch ? (
@@ -156,6 +175,8 @@ function App() {
           revealColorAtEnd={revealColorAtEnd}
           bgSrc={fileUrl || undefined}
           playbackSpeed={playbackSpeed}
+          orderMode={orderMode}
+          keepGroups={keepGroups}
         />
       ) : (
         <p>Upload an image to generate a step-by-step sketch.</p>
