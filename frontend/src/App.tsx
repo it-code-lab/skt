@@ -28,7 +28,7 @@ function App() {
   const [revealColorAtEnd, setRevealColorAtEnd] = useState(true);
 
   const [mode, setMode] = useState<"auto"|"cartoon"|"photo">("auto");
-  const [detail, setDetail] = useState(6);
+  const [detail, setDetail] = useState(10);
   const [vector, setVector] = useState<"outline"|"centerline">("centerline");
 
   const [playbackSpeed, setPlaybackSpeed] = useState(0.5); // 0.5 .. 3
@@ -61,7 +61,7 @@ function App() {
 
   return (
     <div style={{ maxWidth: 1100, margin: "32px auto", padding: 16 }}>
-      <h1>Drawing Tutor (MVP)</h1>
+      {/* <h1>Drawing Tutor (MVP)</h1> */}
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, alignItems: "center", margin: "16px 0", flexWrap: "wrap" }}>
         <input
