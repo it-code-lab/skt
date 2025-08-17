@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { motion, useAnimationControls } from "framer-motion";
+import { PenTipFollower } from "./PenTipFollower";
+import { motion, useMotionValue, useMotionValueEvent, animate } from "framer-motion";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Path = { d: string };
 type Step = { label: string; paths: Path[]; est_ms: number };
@@ -205,44 +206,69 @@ function AnimatedStroke({
   playing?: boolean;
   onDone?: () => void;
 }) {
-  const controls = useAnimationControls();
+  const pathRef = useRef<SVGPathElement>(null);
 
-  // Start / pause / resume the draw animation
-  React.useEffect(() => {
-    let cancelled = false;
+  // Progress motion value drives both the draw and the follower
+  const progress = useMotionValue(0);
+  const [progressNum, setProgressNum] = useState(0);
 
-    async function run() {
-      if (!playing) {
-        controls.stop();                 // pause at current progress
-        return;
-      }
-      await controls.start({
-        strokeDashoffset: 0,
-        transition: {
-          duration: Math.max(0.1, durationMs / 1000),
-          ease: "easeInOut",
-        },
-      });
-      if (!cancelled) onDone?.();
-    }
+  // Keep a handle to the running animation so we can pause/resume cleanly
+  const animRef = useRef<ReturnType<typeof animate> | null>(null);
 
-    run();
-    return () => { cancelled = true; };
-  }, [playing, durationMs, controls, onDone, d]);
+  // When the path data changes, reset to 0
+  useEffect(() => {
+    progress.set(0);
+    // stop any previous animation
+    animRef.current?.stop();
+    animRef.current = null;
+  }, [d]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mirror the motion value into React state for PenTipFollower
+  useMotionValueEvent(progress, "change", (v) => setProgressNum(v));
+
+  // Start / pause / resume animation
+  useEffect(() => {
+    // stop existing animation if any
+    animRef.current?.stop();
+    animRef.current = null;
+
+    if (!playing) return;
+
+    const current = progress.get();              // 0..1
+    const remaining = Math.max(0, 1 - current);
+    const durSec = Math.max(0.1, (durationMs / 1000) * remaining);
+
+    animRef.current = animate(progress, 1, {
+      duration: durSec,
+      ease: "easeInOut",
+      onComplete: () => onDone?.(),
+    });
+
+    return () => {
+      animRef.current?.stop();
+    };
+  }, [playing, durationMs, onDone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <motion.path
-      d={d}
-      fill="none"
-      stroke={stroke}
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      vectorEffect="non-scaling-stroke"
-      initial={{ strokeDashoffset: "100%" }}
-      animate={controls}
-      strokeDasharray="100%"
-      style={{ willChange: "stroke-dashoffset" }}
-    />
+    <>
+      {/* Write-on effect */}
+      <motion.path
+        ref={pathRef}
+        d={d}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+        style={{ pathLength: progress, willChange: "pathLength" }}
+        initial={{ pathLength: 0 }}
+        animate={{}}                 // progress drives style
+        strokeDasharray="0 1"        // required so the stroke "writes" on
+      />
+
+      {/* Pen follower sits on TOP of the path (rendered after it) */}
+      <PenTipFollower pathRef={pathRef} progress={progressNum} />
+    </>
   );
 }
