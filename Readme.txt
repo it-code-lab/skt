@@ -13,7 +13,8 @@ python -m venv venv
 venv\Scripts\activate
 
 python -m pip install --upgrade pip
-pip install fastapi "uvicorn[standard]" python-multipart pillow opencv-python shapely rdp
+pip install -r requirements.txt
+# Old- pip install fastapi "uvicorn[standard]" python-multipart pillow opencv-python shapely rdp
 
 
 Run back end:
@@ -34,10 +35,15 @@ Frontend (React + Vite + TypeScript) — Setup & Run
 =========================================
 
 cd frontend
-npm create vite@latest . -- --template react-ts
+
+#Old - Needed only during first set up
+#npm create vite@latest . -- --template react-ts
+
 npm install
-npm install framer-motion
+#npm install framer-motion
 npm run dev
+
+add .env.local
 
 Open the URL it prints (usually http://localhost:5173).
 Upload any image — you should see the stroke-by-stroke drawing.

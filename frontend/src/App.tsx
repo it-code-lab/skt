@@ -27,7 +27,7 @@ function App() {
   const [gridSize, setGridSize] = useState(50);
   const [revealColorAtEnd, setRevealColorAtEnd] = useState(true);
 
-  const [mode, setMode] = useState<"auto"|"cartoon"|"photo">("auto");
+  const [mode, setMode] = useState<"auto"|"cartoon"|"photo">("cartoon");
   const [detail, setDetail] = useState(10);
   const [vector, setVector] = useState<"outline"|"centerline">("centerline");
 
