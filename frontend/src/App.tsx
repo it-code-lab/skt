@@ -27,6 +27,9 @@ function App() {
   const [gridSize, setGridSize] = useState(50);
   const [revealColorAtEnd, setRevealColorAtEnd] = useState(true);
 
+  const [mode, setMode] = useState<"auto"|"cartoon"|"photo">("auto");
+  const [detail, setDetail] = useState(6);
+
   const API = import.meta.env.VITE_API_BASE_URL;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -36,7 +39,8 @@ function App() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch(`${API}/sketch`, { method: "POST", body: fd });
+      //const res = await fetch(`${API}/sketch`, { method: "POST", body: fd });
+      const res = await fetch(`${API}/sketch?mode=${mode}&detail=${detail}`, { method: "POST", body: fd });
       const data = await res.json();
       setSketch(data);
       if (fileUrl) URL.revokeObjectURL(fileUrl);
@@ -111,6 +115,16 @@ function App() {
         <label style={{ marginLeft: 12 }}>
           <input type="checkbox" checked={revealColorAtEnd} onChange={e => setRevealColorAtEnd(e.target.checked)} /> Reveal original at end
         </label>
+
+        <select value={mode} onChange={e=>setMode(e.target.value as any)}>
+          <option value="auto">Auto</option>
+          <option value="cartoon">Cartoon / Line Art</option>
+          <option value="photo">Photo / Illustration</option>
+        </select>
+        <label>Detail: {detail}
+          <input type="range" min={1} max={10} value={detail}
+                onChange={e=>setDetail(parseInt(e.target.value,10))}/>
+        </label>        
       </form>
 
       {sketch ? (
