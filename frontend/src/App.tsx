@@ -29,6 +29,7 @@ function App() {
 
   const [mode, setMode] = useState<"auto"|"cartoon"|"photo">("auto");
   const [detail, setDetail] = useState(6);
+  const [vector, setVector] = useState<"outline"|"centerline">("outline");
 
   const API = import.meta.env.VITE_API_BASE_URL;
 
@@ -40,7 +41,8 @@ function App() {
       const fd = new FormData();
       fd.append("file", file);
       //const res = await fetch(`${API}/sketch`, { method: "POST", body: fd });
-      const res = await fetch(`${API}/sketch?mode=${mode}&detail=${detail}`, { method: "POST", body: fd });
+      //const res = await fetch(`${API}/sketch?mode=${mode}&detail=${detail}`, { method: "POST", body: fd });
+      const res = await fetch(`${API}/sketch?mode=${mode}&detail=${detail}&vector=${vector}`, { method: "POST", body: fd });
       const data = await res.json();
       setSketch(data);
       if (fileUrl) URL.revokeObjectURL(fileUrl);
@@ -124,7 +126,13 @@ function App() {
         <label>Detail: {detail}
           <input type="range" min={1} max={10} value={detail}
                 onChange={e=>setDetail(parseInt(e.target.value,10))}/>
-        </label>        
+        </label>  
+
+
+        <select value={vector} onChange={e=>setVector(e.target.value as any)}>
+          <option value="outline">Outline (regions)</option>
+          <option value="centerline">Centerline (strokes)</option>
+        </select>      
       </form>
 
       {sketch ? (

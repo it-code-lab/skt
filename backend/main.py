@@ -9,6 +9,9 @@ from rembg import remove as rembg_remove
 from skimage.segmentation import slic
 from skimage.util import img_as_ubyte
 from fastapi import Query
+import cv2, numpy as np
+from skimage.morphology import skeletonize
+
 
 app = FastAPI()
 app.add_middleware(
@@ -60,17 +63,53 @@ def edges_to_svg_paths(img_bgr: np.ndarray):
 #     svg, steps = edges_to_svg_paths(img_bgr)
 #     return JSONResponse({"svg": svg, "steps": steps})
 
+# @app.post("/sketch")
+# async def sketch(
+#     file: UploadFile = File(...),
+#     mode: str = Query("auto", enum=["auto","cartoon","photo"]),
+#     detail: int = Query(5, ge=1, le=10)
+# ):
+#     img = Image.open(io.BytesIO(await file.read())).convert("RGB")
+#     img_bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+#     svg, steps = build_sketch(img_bgr, mode=mode, detail=detail)
+#     return JSONResponse({"svg": svg, "steps": steps})
+
 @app.post("/sketch")
 async def sketch(
     file: UploadFile = File(...),
     mode: str = Query("auto", enum=["auto","cartoon","photo"]),
-    detail: int = Query(5, ge=1, le=10)
+    detail: int = Query(5, ge=1, le=10),
+    vector: str = Query("outline", enum=["outline","centerline"])
 ):
     img = Image.open(io.BytesIO(await file.read())).convert("RGB")
     img_bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-    svg, steps = build_sketch(img_bgr, mode=mode, detail=detail)
-    return JSONResponse({"svg": svg, "steps": steps})
 
+    # --- produce a binary edge/ink map as before (your build_sketch) ---
+    # Here’s a compact version that gives you a binary for either branch:
+    if mode == "auto":
+        q = kmeans_quantize(img_bgr, k=7)
+        is_photo = (q.std() > 35)
+        mode = "photo" if is_photo else "cartoon"
+
+    if mode == "cartoon":
+        binary = edges_cartoon(img_bgr)
+    else:
+        binary = edges_photo(img_bgr)
+
+    # map detail to params
+    rdp_eps = float(np.interp(detail, [1,10], [4.0, 1.2]))
+    min_area_ratio = float(np.interp(detail, [1,10], [0.0020, 0.0002]))
+    max_paths = int(np.interp(detail, [1,10], [120, 700]))
+
+    if vector == "centerline":
+        d_list = binary_to_centerline_paths(binary, rdp_eps=rdp_eps, min_len=10)
+        svg = {"viewBox": f"0 0 {img_bgr.shape[1]} {img_bgr.shape[0]}", "strokes": d_list}
+        steps = [{"label": f"Stroke {i+1}", "paths": [{"d": d}], "est_ms": 600} for i, d in enumerate(d_list)]
+        return JSONResponse({"svg": svg, "steps": steps})
+    else:
+        svg, steps = contours_to_steps(binary, img_bgr.shape, rdp_eps, min_area_ratio, max_paths, retrieval="tree")
+        return JSONResponse({"svg": svg, "steps": steps})
+    
 # ---------- utils ----------
 def kmeans_quantize(img_bgr, k=8, iters=10):
     import cv2, numpy as np
@@ -123,23 +162,57 @@ def edges_photo(img_bgr):
     edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN,  k, iterations=1)
     return edges
 
-def contours_to_steps(binary_img, img_shape, rdp_eps=2.0, min_area_ratio=0.0005,
-                      max_paths=350, mode="tree"):
-    import cv2, numpy as np
-    from rdp import rdp
+# def contours_to_steps(binary_img, img_shape, rdp_eps=2.0, min_area_ratio=0.0005,
+#                       max_paths=350, mode="tree"):
+#     import cv2, numpy as np
+#     from rdp import rdp
 
+#     h, w = img_shape[:2]
+#     min_area = max(4, int(min_area_ratio * (h*w)))
+
+#     retrieval = cv2.RETR_TREE if mode == "tree" else cv2.RETR_LIST
+#     cnts, hier = cv2.findContours(binary_img, retrieval, cv2.CHAIN_APPROX_NONE)
+
+#     paths = []
+#     for c in cnts:
+#         if len(c) < 8:
+#             continue
+#         area = abs(cv2.contourArea(c))
+#         if area < min_area:
+#             continue
+#         pts = c[:,0,:].astype(float).tolist()
+#         simp = rdp(pts, epsilon=rdp_eps)
+#         if len(simp) < 4:
+#             continue
+#         d = f"M {simp[0][0]} {simp[0][1]} " + " ".join([f"L {x} {y}" for x,y in simp[1:]]) + " Z"
+#         paths.append({"d": d, "area": area, "pts": len(simp)})
+
+#     # Keep largest N
+#     paths.sort(key=lambda p: -p["area"])
+#     paths = paths[:max_paths]
+
+#     steps = [{"label": f"Stroke {i+1}",
+#               "paths": [{"d": p["d"]}],
+#               "est_ms": 500 + 7*p["pts"]} for i,p in enumerate(paths)]
+
+#     svg = {"viewBox": f"0 0 {w} {h}", "strokes": [p["d"] for p in paths]}
+#     return svg, steps
+
+def contours_to_steps(binary_img, img_shape, rdp_eps=2.0, min_area_ratio=0.0005,
+                      max_paths=350, retrieval="tree"):
     h, w = img_shape[:2]
     min_area = max(4, int(min_area_ratio * (h*w)))
-
-    retrieval = cv2.RETR_TREE if mode == "tree" else cv2.RETR_LIST
-    cnts, hier = cv2.findContours(binary_img, retrieval, cv2.CHAIN_APPROX_NONE)
+    mode = cv2.RETR_TREE if retrieval == "tree" else cv2.RETR_LIST
+    cnts, _ = cv2.findContours(binary_img, mode, cv2.CHAIN_APPROX_NONE)
 
     paths = []
     for c in cnts:
-        if len(c) < 8:
+        if len(c) < 8: 
             continue
         area = abs(cv2.contourArea(c))
         if area < min_area:
+            continue
+        if remove_frame_like(c, w, h, area):   # <<< drop page/frame boundary
             continue
         pts = c[:,0,:].astype(float).tolist()
         simp = rdp(pts, epsilon=rdp_eps)
@@ -148,14 +221,10 @@ def contours_to_steps(binary_img, img_shape, rdp_eps=2.0, min_area_ratio=0.0005,
         d = f"M {simp[0][0]} {simp[0][1]} " + " ".join([f"L {x} {y}" for x,y in simp[1:]]) + " Z"
         paths.append({"d": d, "area": area, "pts": len(simp)})
 
-    # Keep largest N
     paths.sort(key=lambda p: -p["area"])
     paths = paths[:max_paths]
-
-    steps = [{"label": f"Stroke {i+1}",
-              "paths": [{"d": p["d"]}],
-              "est_ms": 500 + 7*p["pts"]} for i,p in enumerate(paths)]
-
+    steps = [{"label": f"Stroke {i+1}", "paths": [{"d": p["d"]}], "est_ms": 500 + 7*p["pts"]}
+             for i,p in enumerate(paths)]
     svg = {"viewBox": f"0 0 {w} {h}", "strokes": [p["d"] for p in paths]}
     return svg, steps
 
@@ -183,3 +252,81 @@ def build_sketch(img_bgr, mode="auto", detail=5):
     else:  # photo
         edges = edges_photo(img_bgr)
         return contours_to_steps(edges, img_bgr.shape, rdp_eps, min_area_ratio, max_paths, mode="list")
+    
+def remove_frame_like(cnt, img_w, img_h, area, pad=3):
+    x,y,w,h = cv2.boundingRect(cnt)
+    touches_edges = (x <= pad or y <= pad or x + w >= img_w - pad or y + h >= img_h - pad)
+    too_big = (w >= 0.95*img_w and h >= 0.95*img_h) or (area >= 0.60 * (img_w*img_h))
+    return touches_edges and too_big
+
+def binary_to_centerline_paths(binary, rdp_eps=2.0, min_len=12):
+    """
+    Convert a binary line image to 1px skeleton and trace polylines.
+    Returns list of SVG path 'd' strings (centerlines).
+    """
+    # Ensure single-channel 0/1
+    bw = (binary > 0).astype(np.uint8)
+    skel = skeletonize(bw).astype(np.uint8)  # 0/1 image
+
+    # Count 8-neighbours for degree
+    kernel = np.ones((3,3), np.uint8)
+    deg = cv2.filter2D(skel, -1, kernel, borderType=cv2.BORDER_CONSTANT) - skel
+    endpoints = np.argwhere((skel == 1) & (deg == 1))
+    visited = np.zeros_like(skel, dtype=np.uint8)
+
+    H, W = skel.shape
+    nbrs8 = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
+
+    def trace_from(p):
+        path = [tuple(p)]
+        visited[p[0], p[1]] = 1
+        cur = tuple(p)
+        prev = None
+        while True:
+            nxt = None
+            for dx,dy in nbrs8:
+                nx, ny = cur[0]+dx, cur[1]+dy
+                if 0 <= nx < H and 0 <= ny < W and skel[nx,ny] == 1 and not visited[nx,ny]:
+                    if prev is None or (nx,ny) != prev:
+                        nxt = (nx,ny)
+                        break
+            if nxt is None:
+                break
+            prev = cur
+            cur = nxt
+            path.append(cur)
+            visited[cur[0], cur[1]] = 1
+            # stop if we reach a junction (deg>=3) or endpoint (deg==1)
+            d = deg[cur[0], cur[1]]
+            if d >= 3:
+                break
+        return path
+
+    # Trace from endpoints first (covers most strokes)
+    lines = []
+    for p in endpoints:
+        p = tuple(p)
+        if visited[p[0], p[1]]: 
+            continue
+        line = trace_from(p)
+        if len(line) >= min_len:
+            # simplify & build SVG 'd'
+            simp = rdp([(xy[1], xy[0]) for xy in line], epsilon=rdp_eps)  # swap to (x,y)
+            if len(simp) >= 2:
+                d = f"M {simp[0][0]} {simp[0][1]} " + " ".join([f"L {x} {y}" for x,y in simp[1:]])
+                lines.append(d)
+
+    # Optional: trace remaining pixels (small loops) as fallback
+    remaining = np.argwhere((skel == 1) & (visited == 0))
+    for p in remaining:
+        p = tuple(p)
+        if visited[p[0], p[1]]:
+            continue
+        line = trace_from(p)
+        if len(line) >= min_len:
+            simp = rdp([(xy[1], xy[0]) for xy in line], epsilon=rdp_eps)
+            if len(simp) >= 2:
+                d = f"M {simp[0][0]} {simp[0][1]} " + " ".join([f"L {x} {y}" for x,y in simp[1:]])
+                lines.append(d)
+
+    return lines

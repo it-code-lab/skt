@@ -41,3 +41,32 @@ npm run dev
 
 Open the URL it prints (usually http://localhost:5173).
 Upload any image — you should see the stroke-by-stroke drawing.
+
+===============================
+=====================================
+Getting image for the input: (Flat-color cartoon)
+=====================================
+=====================================
+
+[OBJECT/CHARACTER], [view: side/3-quarter/front], clean vector cartoon, 
+bold black outlines ~3–5px, flat colors (4–6), high contrast, 
+separate parts clearly visible ([list key parts]), centered, 
+plain white background, no gradients, no texture, no drop shadow, no text, no watermark, 
+high resolution, [ASPECT e.g., 16:9 or 9:16], 2048 px long side
+
+UI Input for such image ==>Cartoon Line art, Detail - 5, Centerline strokes
+
+
+===============================
+=====================================
+Getting image for the input: (Pure line art)
+=====================================
+=====================================
+
+Black-ink line art of [OBJECT/CHARACTER], [view], single continuous strokes, 
+uniform line weight, no fill, no shading, no cross-hatching, 
+clean outlines with closed gaps, centered, white background, 
+no texture, no text, no watermark, high resolution, [ASPECT], 2048 px long side
+
+
+UI Input for such image ==>Auto, Detail - 5, Centerline strokes
