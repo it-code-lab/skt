@@ -19,7 +19,7 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   const [aspectKey, setAspectKey] = useState<keyof typeof ASPECTS>("16:9");
-  const [targetWidth, setTargetWidth] = useState<number>(1920);
+  const [targetWidth, setTargetWidth] = useState<number>(1060);
   const aspect = ASPECTS[aspectKey];
   const targetHeight = useMemo(() => Math.round(targetWidth / aspect), [targetWidth, aspect]);
 
@@ -31,7 +31,7 @@ function App() {
   const [detail, setDetail] = useState(10);
   const [vector, setVector] = useState<"outline"|"centerline">("centerline");
 
-  const [playbackSpeed, setPlaybackSpeed] = useState(0.5); // 0.5 .. 3
+  const [playbackSpeed, setPlaybackSpeed] = useState(2); // 0.5 .. 3
 
   // NEW: ordering + grouping options
   const [orderMode, setOrderMode] = useState<"original" | "top-bottom" | "left-right" | "area">("top-bottom");
@@ -62,6 +62,23 @@ function App() {
   return (
     <div style={{ maxWidth: 1100, margin: "32px auto", padding: 16 }}>
       {/* <h1>Drawing Tutor (MVP)</h1> */}
+
+      {sketch ? (
+        <SketchPlayer
+          data={sketch}
+          width={targetWidth}
+          height={targetHeight}
+          showGrid={showGrid}
+          gridSize={gridSize}
+          revealColorAtEnd={revealColorAtEnd}
+          bgSrc={fileUrl || undefined}
+          playbackSpeed={playbackSpeed}
+          orderMode={orderMode}
+          keepGroups={keepGroups}
+        />
+      ) : (
+        <p>Upload an image to generate a step-by-step sketch.</p>
+      )}
 
       <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, alignItems: "center", margin: "16px 0", flexWrap: "wrap" }}>
         <input
@@ -165,22 +182,7 @@ function App() {
         </div>
       </form>
 
-      {sketch ? (
-        <SketchPlayer
-          data={sketch}
-          width={targetWidth}
-          height={targetHeight}
-          showGrid={showGrid}
-          gridSize={gridSize}
-          revealColorAtEnd={revealColorAtEnd}
-          bgSrc={fileUrl || undefined}
-          playbackSpeed={playbackSpeed}
-          orderMode={orderMode}
-          keepGroups={keepGroups}
-        />
-      ) : (
-        <p>Upload an image to generate a step-by-step sketch.</p>
-      )}
+
     </div>
   );
 }
