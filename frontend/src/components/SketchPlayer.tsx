@@ -1,6 +1,7 @@
 import { PenTipFollower } from "./PenTipFollower";
 import { motion, useMotionValue, useMotionValueEvent, animate } from "framer-motion";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import LoopingAudio from "./LoopingAudio";
 
 type Path = { d: string };
 type Step = { label: string; paths: Path[]; est_ms: number };
@@ -176,6 +177,7 @@ export default function SketchPlayer({
         <button onClick={() => { setPlaying(false); setPathIdx(i => Math.max(0, i - 1)); }}>Back</button>
         <button onClick={() => { setPlaying(false); setPathIdx(i => Math.min(timeline.length, i + 1)); }}>Next</button>
         <button onClick={() => { setPlaying(false); setPathIdx(0); }}>Reset</button>
+        <LoopingAudio defaultUrl="/audio/loop.mp3" />
 
         <label style={{ marginLeft: 12 }}>
           Speed:&nbsp;

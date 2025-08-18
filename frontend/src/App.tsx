@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import SketchPlayer from "./components/SketchPlayer";
+import LoopingAudio from "./components/LoopingAudio";
 
 type Sketch = {
   svg: { viewBox: string; strokes: string[] };
@@ -19,7 +20,11 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   const [aspectKey, setAspectKey] = useState<keyof typeof ASPECTS>("16:9");
-  const [targetWidth, setTargetWidth] = useState<number>(1060);
+
+
+  // const [targetWidth, setTargetWidth] = useState<number>(1060); // For Dell Precision
+  const [targetWidth, setTargetWidth] = useState<number>(860); // For Dell Latitude
+
   const aspect = ASPECTS[aspectKey];
   const targetHeight = useMemo(() => Math.round(targetWidth / aspect), [targetWidth, aspect]);
 
